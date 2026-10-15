@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Safran et moteur micro:bit</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;600;700&display=swap">
+<style>
+:root{--bg:#eef2ee;--ink:#14262b;--mute:#5d6f73;--line:#c5d1ce;--acc:#0a6c74;--on:#fff;--stop:#b3261e;color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0d1a1f;--ink:#e6efee;--mute:#93a8ab;--line:#264047;--acc:#4fc3c9;--on:#06191c;--stop:#ff6b5e;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0d1a1f;--ink:#e6efee;--mute:#93a8ab;--line:#264047;--acc:#4fc3c9;--on:#06191c;--stop:#ff6b5e;color-scheme:dark}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 17px/1.4 Barlow,system-ui,sans-serif}
+main{max-width:480px;margin:0 auto;padding:16px}
+header{display:flex;justify-content:space-between;align-items:center;gap:12px}
+h1{font-size:22px;margin:0;font-weight:700}
+#st{font-size:14px;color:var(--mute)}#st[data-ok="1"]{color:var(--acc)}
+button{font:600 17px Barlow,system-ui,sans-serif;min-height:48px;padding:0 18px;border-radius:10px;border:2px solid var(--acc);background:transparent;color:var(--acc)}
+button.p{background:var(--acc);color:var(--on)}
+#stop{width:100%;margin:14px 0 4px;background:var(--stop);border-color:var(--stop);color:#fff;font-size:20px;min-height:58px}
+section{border-top:1px solid var(--line);margin-top:18px;padding-top:14px}
+h2{font-size:18px;margin:0 0 6px;display:flex;justify-content:space-between;align-items:baseline}
+h2 b{font-size:30px;font-weight:700;font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;height:48px;accent-color:var(--acc);margin:0}
+.ends{display:flex;justify-content:space-between;font-size:14px;color:var(--mute)}
+.row{display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap}
+input[type=number]{width:84px;min-height:48px;font:600 18px Barlow,system-ui,sans-serif;padding:0 8px;border-radius:10px;border:2px solid var(--line);background:transparent;color:var(--ink)}
+label{font-size:14px;color:var(--mute);display:flex;flex-direction:column;gap:2px}
+svg{display:block;margin:0 auto;width:150px;height:96px;color:var(--ink)}
+details{margin-top:12px}summary{min-height:44px;display:flex;align-items:center;color:var(--mute)}
+</style></head><body><main>
+<header><h1>Safran et moteur</h1><button id="cx" class="p">Connecter</button></header>
+<div id="st" data-ok="0">Non connecté</div>
+<button id="stop">STOP</button>
+
+<section>
+<h2>Safran <b id="vb">0°</b></h2>
+<svg viewBox="0 0 150 96" aria-hidden="true"><path d="M75 4C102 28 105 62 98 78H52C45 62 48 28 75 4Z" fill="none" stroke="currentColor" stroke-width="2"/><line id="rd" x1="75" y1="78" x2="75" y2="94" stroke="var(--acc)" stroke-width="4" stroke-linecap="round"/></svg>
+<input id="rb" type="range" min="-45" max="45" step="1" value="0" aria-label="Safran">
+<div class="ends"><span>bâbord</span><span>tribord</span></div>
+<div class="row"><button id="ctr">Centrer</button></div>
+</section>
+
+<section>
+<h2>Moteur <b id="vm">0 %</b></h2>
+<input id="rm" type="range" min="-100" max="100" step="5" value="0" aria-label="Moteur">
+<div class="ends"><span>arrière</span><span>avant</span></div>
+<div class="row"><button id="m0">Moteur stop</button></div>
+</section>
+
+<section>
+<h2>Pilote de cap <b id="cp">---°</b></h2>
+<div id="hold" class="ends"><span>Manuel</span></div>
+<div class="row"><label>Cap visé<input id="ct" type="number" min="0" max="359" value="0"></label>
+<button id="h1" class="p">Tenir ce cap</button><button id="h2">Cap actuel</button><button id="h0">Reprendre la main</button></div>
+<details><summary>Réglages</summary>
+<div class="row"><label>Kp<input id="kp" type="number" step="0.1" value="1"></label><label>Ki<input id="ki" type="number" step="0.01" value="0"></label><label>Kd<input id="kd" type="number" step="0.1" value="0.5"></label><label>Trim servo (°)<input id="tr" type="number" step="1" value="0"></label></div>
+<div class="row"><button id="ap">Envoyer les réglages</button></div></details>
+</section>
+
+<script>
+const $=i=>document.getElementById(i),enc=new TextEncoder(),dec=new TextDecoder();
+const U='6e400001-b5a3-f393-e0a9-e50e24dcca9e',RX='6e400002-b5a3-f393-e0a9-e50e24dcca9e',TX='6e400003-b5a3-f393-e0a9-e50e24dcca9e';
+let rx=null,dev=null,q=Promise.resolve(),hb=null,buf='',lastB=0,lastM=0,cap=null;
+function send(s){if(rx)q=q.then(()=>rx.writeValueWithoutResponse(enc.encode(s+'\n'))).catch(()=>{})}
+function st(t,ok){$('st').textContent=t;$('st').dataset.ok=ok?1:0}
+function showB(a){$('vb').textContent=(a>0?'+':'')+a+'°';const r=a*Math.PI/180;$('rd').setAttribute('x2',75+16*Math.sin(r));$('rd').setAttribute('y2',78+16*Math.cos(r))}
+function showM(v){$('vm').textContent=v+' %'}
+function tel(l){if(l[0]!=='T')return;const[c,b,m,h]=l.slice(1).split(',').map(Number);
+ cap=c;$('cp').textContent=c+'°';showB(b);$('rb').value=b;showM(m);$('rm').value=m;
+ $('hold').firstChild.textContent=h>=0?'Cap tenu : '+h+'°':'Manuel'}
+async function connect(){
+ if(!navigator.bluetooth){st('Web Bluetooth absent : ouvrir cette page dans Bluefy',0);return}
+ try{
+  dev=await navigator.bluetooth.requestDevice({filters:[{namePrefix:'BBC micro:bit'}],optionalServices:[U]});
+  dev.addEventListener('gattserverdisconnected',()=>{rx=null;clearInterval(hb);st('Déconnecté',0);$('cx').textContent='Connecter'});
+  st('Connexion…',0);
+  const s=await(await dev.gatt.connect()).getPrimaryService(U);
+  rx=await s.getCharacteristic(RX);const tx=await s.getCharacteristic(TX);
+  await tx.startNotifications();
+  tx.addEventListener('characteristicvaluechanged',e=>{buf+=dec.decode(e.target.value);let i;while((i=buf.indexOf('\n'))>=0){tel(buf.slice(0,i).trim());buf=buf.slice(i+1)}});
+  hb=setInterval(()=>send('P'),500);
+  st('Connecté à '+dev.name,1);$('cx').textContent='Déconnecter';
+  try{await navigator.wakeLock.request('screen')}catch(e){}
+  reglages();send('R0');send('M0');
+ }catch(e){st('Échec : '+e.message,0)}
+}
+function reglages(){send('G'+$('kp').value+','+$('ki').value+','+$('kd').value);send('T'+$('tr').value)}
+function stopAll(){$('rm').value=0;$('rb').value=0;showM(0);showB(0);send('X')}
+$('cx').onclick=()=>{if(dev&&dev.gatt.connected){send('X');dev.gatt.disconnect()}else connect()};
+$('stop').onclick=stopAll;
+$('rb').oninput=e=>{const v=+e.target.value;showB(v);const t=Date.now();if(t-lastB>80){lastB=t;send('R'+v)}};
+$('rb').onchange=e=>send('R'+e.target.value);
+$('ctr').onclick=()=>{$('rb').value=0;showB(0);send('R0')};
+$('rm').oninput=e=>{const v=+e.target.value;showM(v);const t=Date.now();if(t-lastM>80){lastM=t;send('M'+v)}};
+$('rm').onchange=e=>send('M'+e.target.value);
+$('m0').onclick=()=>{$('rm').value=0;showM(0);send('M0')};
+$('h1').onclick=()=>{reglages();send('H'+(((+$('ct').value%360)+360)%360))};
+$('h2').onclick=()=>{if(cap!==null)$('ct').value=cap};
+$('h0').onclick=()=>send('N');
+$('ap').onclick=reglages;
+</script></main></body></html>
